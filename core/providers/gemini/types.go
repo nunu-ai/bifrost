@@ -1259,16 +1259,24 @@ func (p Part) MarshalJSON() ([]byte, error) {
 // This handles the thoughtSignature field which can be sent as a base64-encoded string from the Google GenAI SDK.
 func (p *Part) UnmarshalJSON(data []byte) error {
 	type PartAlias struct {
-		VideoMetadata       *VideoMetadata       `json:"videoMetadata,omitempty"`
-		Thought             bool                 `json:"thought,omitempty"`
-		InlineData          *Blob                `json:"inlineData,omitempty"`
-		FileData            *FileData            `json:"fileData,omitempty"`
-		ThoughtSignature    string               `json:"thoughtSignature,omitempty"`
-		CodeExecutionResult *CodeExecutionResult `json:"codeExecutionResult,omitempty"`
-		ExecutableCode      *ExecutableCode      `json:"executableCode,omitempty"`
-		FunctionCall        *FunctionCall        `json:"functionCall,omitempty"`
-		FunctionResponse    *FunctionResponse    `json:"functionResponse,omitempty"`
-		Text                string               `json:"text,omitempty"`
+		VideoMetadata            *VideoMetadata       `json:"videoMetadata,omitempty"`
+		VideoMetadataSnake       *VideoMetadata       `json:"video_metadata,omitempty"`
+		Thought                  bool                 `json:"thought,omitempty"`
+		InlineData               *Blob                `json:"inlineData,omitempty"`
+		InlineDataSnake          *Blob                `json:"inline_data,omitempty"`
+		FileData                 *FileData            `json:"fileData,omitempty"`
+		FileDataSnake            *FileData            `json:"file_data,omitempty"`
+		ThoughtSignature         string               `json:"thoughtSignature,omitempty"`
+		ThoughtSignatureSnake    string               `json:"thought_signature,omitempty"`
+		CodeExecutionResult      *CodeExecutionResult `json:"codeExecutionResult,omitempty"`
+		CodeExecutionResultSnake *CodeExecutionResult `json:"code_execution_result,omitempty"`
+		ExecutableCode           *ExecutableCode      `json:"executableCode,omitempty"`
+		ExecutableCodeSnake      *ExecutableCode      `json:"executable_code,omitempty"`
+		FunctionCall             *FunctionCall        `json:"functionCall,omitempty"`
+		FunctionCallSnake        *FunctionCall        `json:"function_call,omitempty"`
+		FunctionResponse         *FunctionResponse    `json:"functionResponse,omitempty"`
+		FunctionResponseSnake    *FunctionResponse    `json:"function_response,omitempty"`
+		Text                     string               `json:"text,omitempty"`
 	}
 
 	var aux PartAlias
@@ -1277,21 +1285,47 @@ func (p *Part) UnmarshalJSON(data []byte) error {
 	}
 
 	p.VideoMetadata = aux.VideoMetadata
+	if p.VideoMetadata == nil {
+		p.VideoMetadata = aux.VideoMetadataSnake
+	}
 	p.Thought = aux.Thought
 	p.InlineData = aux.InlineData
+	if p.InlineData == nil {
+		p.InlineData = aux.InlineDataSnake
+	}
 	p.FileData = aux.FileData
+	if p.FileData == nil {
+		p.FileData = aux.FileDataSnake
+	}
 	p.CodeExecutionResult = aux.CodeExecutionResult
+	if p.CodeExecutionResult == nil {
+		p.CodeExecutionResult = aux.CodeExecutionResultSnake
+	}
 	p.ExecutableCode = aux.ExecutableCode
+	if p.ExecutableCode == nil {
+		p.ExecutableCode = aux.ExecutableCodeSnake
+	}
 	p.FunctionCall = aux.FunctionCall
+	if p.FunctionCall == nil {
+		p.FunctionCall = aux.FunctionCallSnake
+	}
 	p.FunctionResponse = aux.FunctionResponse
+	if p.FunctionResponse == nil {
+		p.FunctionResponse = aux.FunctionResponseSnake
+	}
 	p.Text = aux.Text
 
-	if aux.ThoughtSignature != "" {
-		if aux.ThoughtSignature == skipThoughtSignatureValidator {
+	thoughtSignature := aux.ThoughtSignature
+	if thoughtSignature == "" {
+		thoughtSignature = aux.ThoughtSignatureSnake
+	}
+
+	if thoughtSignature != "" {
+		if thoughtSignature == skipThoughtSignatureValidator {
 			p.ThoughtSignature = []byte(skipThoughtSignatureValidator)
 		} else {
 			// Convert URL-safe base64 to standard base64
-			standardBase64 := strings.ReplaceAll(strings.ReplaceAll(aux.ThoughtSignature, "_", "/"), "-", "+")
+			standardBase64 := strings.ReplaceAll(strings.ReplaceAll(thoughtSignature, "_", "/"), "-", "+")
 			// Add padding if necessary
 			switch len(standardBase64) % 4 {
 			case 2:
@@ -1324,9 +1358,11 @@ type Blob struct {
 // UnmarshalJSON custom unmarshaler for Blob to handle URL-safe base64
 func (b *Blob) UnmarshalJSON(data []byte) error {
 	type BlobAlias struct {
-		DisplayName string `json:"displayName,omitempty"`
-		Data        string `json:"data,omitempty"`
-		MIMEType    string `json:"mimeType,omitempty"`
+		DisplayName      string `json:"displayName,omitempty"`
+		DisplayNameSnake string `json:"display_name,omitempty"`
+		Data             string `json:"data,omitempty"`
+		MIMEType         string `json:"mimeType,omitempty"`
+		MIMETypeSnake    string `json:"mime_type,omitempty"`
 	}
 
 	var aux BlobAlias
@@ -1335,7 +1371,13 @@ func (b *Blob) UnmarshalJSON(data []byte) error {
 	}
 
 	b.DisplayName = aux.DisplayName
+	if b.DisplayName == "" {
+		b.DisplayName = aux.DisplayNameSnake
+	}
 	b.MIMEType = aux.MIMEType
+	if b.MIMEType == "" {
+		b.MIMEType = aux.MIMETypeSnake
+	}
 
 	if aux.Data != "" {
 		// Convert URL-safe base64 to standard base64
@@ -1413,6 +1455,38 @@ type FileData struct {
 	MIMEType string `json:"mimeType,omitempty"`
 }
 
+// UnmarshalJSON handles both camelCase and snake_case file data fields.
+func (f *FileData) UnmarshalJSON(data []byte) error {
+	type FileDataAlias struct {
+		DisplayName      string `json:"displayName,omitempty"`
+		DisplayNameSnake string `json:"display_name,omitempty"`
+		FileURI          string `json:"fileUri,omitempty"`
+		FileURISnake     string `json:"file_uri,omitempty"`
+		MIMEType         string `json:"mimeType,omitempty"`
+		MIMETypeSnake    string `json:"mime_type,omitempty"`
+	}
+
+	var aux FileDataAlias
+	if err := sonic.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	f.DisplayName = aux.DisplayName
+	if f.DisplayName == "" {
+		f.DisplayName = aux.DisplayNameSnake
+	}
+	f.FileURI = aux.FileURI
+	if f.FileURI == "" {
+		f.FileURI = aux.FileURISnake
+	}
+	f.MIMEType = aux.MIMEType
+	if f.MIMEType == "" {
+		f.MIMEType = aux.MIMETypeSnake
+	}
+
+	return nil
+}
+
 // FunctionCall represents a function call.
 type FunctionCall struct {
 	// Optional. The unique ID of the function call. If populated, the client to execute
@@ -1449,6 +1523,48 @@ type FunctionResponse struct {
 	// function output and "error" key to specify error details (if any). If "output" and
 	// "error" keys are not specified, then whole "response" is treated as function output.
 	Response json.RawMessage `json:"response,omitempty"`
+	// Optional. Additional media parts attached to the function response. The native
+	// Gemini SDK uses this for tool outputs that include screenshots or other blobs.
+	Parts []*FunctionResponsePart `json:"parts,omitempty"`
+}
+
+// FunctionResponseBlob represents raw media bytes for function response attachments.
+type FunctionResponseBlob = Blob
+
+// FunctionResponseFileData represents URI-based data for function response attachments.
+type FunctionResponseFileData = FileData
+
+// FunctionResponsePart represents media nested under a Gemini functionResponse.
+// Unlike regular Part, this only allows media attachments, not text.
+type FunctionResponsePart struct {
+	InlineData *FunctionResponseBlob     `json:"inlineData,omitempty"`
+	FileData   *FunctionResponseFileData `json:"fileData,omitempty"`
+}
+
+// UnmarshalJSON handles both camelCase and snake_case function response media parts.
+func (f *FunctionResponsePart) UnmarshalJSON(data []byte) error {
+	type FunctionResponsePartAlias struct {
+		InlineData      *FunctionResponseBlob     `json:"inlineData,omitempty"`
+		InlineDataSnake *FunctionResponseBlob     `json:"inline_data,omitempty"`
+		FileData        *FunctionResponseFileData `json:"fileData,omitempty"`
+		FileDataSnake   *FunctionResponseFileData `json:"file_data,omitempty"`
+	}
+
+	var aux FunctionResponsePartAlias
+	if err := sonic.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	f.InlineData = aux.InlineData
+	if f.InlineData == nil {
+		f.InlineData = aux.InlineDataSnake
+	}
+	f.FileData = aux.FileData
+	if f.FileData == nil {
+		f.FileData = aux.FileDataSnake
+	}
+
+	return nil
 }
 
 // ==================== RESPONSE TYPES ====================

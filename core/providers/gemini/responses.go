@@ -388,24 +388,21 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 				if msg.ResponsesToolMessage.CallID != nil {
 					functionResponse.ID = *msg.ResponsesToolMessage.CallID
 				}
-
-				currentParts = append(currentParts, &Part{
-					FunctionResponse: functionResponse,
-				})
-
-				// Add media parts (images, files, audio) from output blocks alongside the function response
 				if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks != nil {
 					for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
 						// Skip text blocks — already included in FunctionResponse.Response
 						if block.Text != nil {
 							continue
 						}
-						mediaPart, err := convertContentBlockToGeminiPart(block)
+						mediaPart, err := convertContentBlockToGeminiFunctionResponsePart(block)
 						if err == nil && mediaPart != nil {
-							currentParts = append(currentParts, mediaPart)
+							functionResponse.Parts = append(functionResponse.Parts, mediaPart)
 						}
 					}
 				}
+				currentParts = append(currentParts, &Part{
+					FunctionResponse: functionResponse,
+				})
 			}
 
 			// Handle reasoning messages
@@ -1376,6 +1373,12 @@ func processGeminiFunctionResponsePart(part *Part, state *GeminiResponsesStreamS
 
 	// Extract output from function response
 	output := extractFunctionResponseOutput(part.FunctionResponse)
+	outputStruct := convertGeminiFunctionResponseToToolOutput(part.FunctionResponse)
+	if outputStruct == nil {
+		outputStruct = &schemas.ResponsesToolMessageOutputStruct{
+			ResponsesToolCallOutputStr: &output,
+		}
+	}
 
 	// Create new output item for the function response
 	outputIndex := state.nextOutputIndex()
@@ -1397,9 +1400,7 @@ func processGeminiFunctionResponsePart(part *Part, state *GeminiResponsesStreamS
 		Status: &status,
 		ResponsesToolMessage: &schemas.ResponsesToolMessage{
 			CallID: &responseID,
-			Output: &schemas.ResponsesToolMessageOutputStruct{
-				ResponsesToolCallOutputStr: &output,
-			},
+			Output: outputStruct,
 		},
 	}
 
@@ -1429,9 +1430,7 @@ func processGeminiFunctionResponsePart(part *Part, state *GeminiResponsesStreamS
 			Status: &status,
 			ResponsesToolMessage: &schemas.ResponsesToolMessage{
 				CallID: &responseID,
-				Output: &schemas.ResponsesToolMessageOutputStruct{
-					ResponsesToolCallOutputStr: &output,
-				},
+				Output: outputStruct,
 			},
 		},
 	})
@@ -1444,6 +1443,59 @@ func processGeminiFunctionResponsePart(part *Part, state *GeminiResponsesStreamS
 	}
 
 	return responses
+}
+
+func convertGeminiFunctionResponseToToolOutput(funcResp *FunctionResponse) *schemas.ResponsesToolMessageOutputStruct {
+	if funcResp == nil {
+		return nil
+	}
+
+	output := extractFunctionResponseOutput(funcResp)
+	if len(funcResp.Parts) == 0 {
+		if output == "" {
+			return nil
+		}
+		return &schemas.ResponsesToolMessageOutputStruct{
+			ResponsesToolCallOutputStr: &output,
+		}
+	}
+
+	blocks := make([]schemas.ResponsesMessageContentBlock, 0, len(funcResp.Parts)+1)
+	if output != "" {
+		blocks = append(blocks, schemas.ResponsesMessageContentBlock{
+			Type: schemas.ResponsesInputMessageContentBlockTypeText,
+			Text: schemas.Ptr(output),
+		})
+	}
+
+	for _, nestedPart := range funcResp.Parts {
+		if nestedPart == nil {
+			continue
+		}
+		switch {
+		case nestedPart.InlineData != nil:
+			if block := convertGeminiInlineDataToContentBlock(nestedPart.InlineData); block != nil {
+				blocks = append(blocks, *block)
+			}
+		case nestedPart.FileData != nil:
+			if block := convertGeminiFileDataToContentBlock(nestedPart.FileData); block != nil {
+				blocks = append(blocks, *block)
+			}
+		}
+	}
+
+	if len(blocks) == 0 {
+		if output == "" {
+			return nil
+		}
+		return &schemas.ResponsesToolMessageOutputStruct{
+			ResponsesToolCallOutputStr: &output,
+		}
+	}
+
+	return &schemas.ResponsesToolMessageOutputStruct{
+		ResponsesFunctionToolCallOutputBlocks: blocks,
+	}
 }
 
 // processGeminiInlineDataPart handles inline data parts
@@ -2339,15 +2391,19 @@ func convertGeminiCandidatesToResponsesOutput(candidates []*Candidate) []schemas
 			case part.FunctionResponse != nil:
 				// Function response message
 				output := extractFunctionResponseOutput(part.FunctionResponse)
+				outputStruct := convertGeminiFunctionResponseToToolOutput(part.FunctionResponse)
+				if outputStruct == nil {
+					outputStruct = &schemas.ResponsesToolMessageOutputStruct{
+						ResponsesToolCallOutputStr: &output,
+					}
+				}
 
 				msg := schemas.ResponsesMessage{
 					Role: schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant),
 					Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
 					ResponsesToolMessage: &schemas.ResponsesToolMessage{
 						CallID: schemas.Ptr(part.FunctionResponse.ID),
-						Output: &schemas.ResponsesToolMessageOutputStruct{
-							ResponsesToolCallOutputStr: &output,
-						},
+						Output: outputStruct,
 					},
 				}
 
@@ -3112,21 +3168,19 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 							ID:       *msg.ResponsesToolMessage.CallID,
 						},
 					}
-					pendingFunctionResponseParts = append(pendingFunctionResponseParts, part)
-
-					// Add media parts (images, files, audio) from output blocks alongside the function response
 					if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks != nil {
 						for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
 							// Skip text blocks — already included in FunctionResponse.Response
 							if block.Text != nil {
 								continue
 							}
-							mediaPart, err := convertContentBlockToGeminiPart(block)
+							mediaPart, err := convertContentBlockToGeminiFunctionResponsePart(block)
 							if err == nil && mediaPart != nil {
-								pendingFunctionResponseParts = append(pendingFunctionResponseParts, mediaPart)
+								part.FunctionResponse.Parts = append(part.FunctionResponse.Parts, mediaPart)
 							}
 						}
 					}
+					pendingFunctionResponseParts = append(pendingFunctionResponseParts, part)
 
 					// If this is the last message, flush pending responses
 					if i == len(messages)-1 && len(pendingFunctionResponseParts) > 0 {
@@ -3334,6 +3388,34 @@ func convertContentBlockToGeminiPart(block schemas.ResponsesMessageContentBlock)
 	}
 
 	return nil, nil
+}
+
+func convertContentBlockToGeminiFunctionResponsePart(block schemas.ResponsesMessageContentBlock) (*FunctionResponsePart, error) {
+	part, err := convertContentBlockToGeminiPart(block)
+	if err != nil || part == nil {
+		return nil, err
+	}
+
+	switch {
+	case part.InlineData != nil:
+		return &FunctionResponsePart{
+			InlineData: &FunctionResponseBlob{
+				DisplayName: part.InlineData.DisplayName,
+				Data:        part.InlineData.Data,
+				MIMEType:    part.InlineData.MIMEType,
+			},
+		}, nil
+	case part.FileData != nil:
+		return &FunctionResponsePart{
+			FileData: &FunctionResponseFileData{
+				DisplayName: part.FileData.DisplayName,
+				FileURI:     part.FileData.FileURI,
+				MIMEType:    part.FileData.MIMEType,
+			},
+		}, nil
+	default:
+		return nil, nil
+	}
 }
 
 // buildGroundingMetadataFromWebSearch converts a Bifrost web_search_call message to Gemini GroundingMetadata

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/internal/llmtests"
 	"github.com/maximhq/bifrost/core/providers/gemini"
 	"github.com/stretchr/testify/assert"
@@ -2355,19 +2356,17 @@ func TestToolResponseWithMediaContent(t *testing.T) {
 
 				require.NotNil(t, toolResponseContent, "Should have a Content with FunctionResponse")
 				assert.Equal(t, "model", toolResponseContent.Role)
-				require.Len(t, toolResponseContent.Parts, 2, "Should have 2 parts: FunctionResponse + FileData for image")
+				require.Len(t, toolResponseContent.Parts, 1, "Should have 1 part: FunctionResponse with nested media")
 
-				// First part: FunctionResponse
+				// FunctionResponse with nested FileData for the image URL
 				part0 := toolResponseContent.Parts[0]
 				require.NotNil(t, part0.FunctionResponse, "First part must be FunctionResponse")
 				assert.Equal(t, "call_ss", part0.FunctionResponse.ID)
 				assert.Equal(t, "take_screenshot", part0.FunctionResponse.Name)
-
-				// Second part: FileData for the image URL
-				part1 := toolResponseContent.Parts[1]
-				require.NotNil(t, part1.FileData, "Second part must be FileData for image URL")
-				assert.Equal(t, "https://example.com/screenshot.png", part1.FileData.FileURI)
-				assert.NotEmpty(t, part1.FileData.MIMEType)
+				require.Len(t, part0.FunctionResponse.Parts, 1)
+				require.NotNil(t, part0.FunctionResponse.Parts[0].FileData, "Image URL should be nested under functionResponse.parts")
+				assert.Equal(t, "https://example.com/screenshot.png", part0.FunctionResponse.Parts[0].FileData.FileURI)
+				assert.NotEmpty(t, part0.FunctionResponse.Parts[0].FileData.MIMEType)
 			},
 		},
 		{
@@ -3394,6 +3393,158 @@ func TestGenAIThinkingLevel_RoundTripPreservesLevelNotBudget(t *testing.T) {
 	require.NotNil(t, tc.ThinkingLevel)
 	assert.Equal(t, "minimal", *tc.ThinkingLevel)
 	assert.Nil(t, tc.ThinkingBudget, "round-trip must not synthesize thinkingBudget from level-only config")
+}
+
+func TestGenAIFunctionResponseParts_PreservedInBifrostToolOutput(t *testing.T) {
+	geminiReq := &gemini.GeminiGenerationRequest{
+		Model: "gemini-2.5-flash",
+		Contents: []gemini.Content{
+			{
+				Role: "model",
+				Parts: []*gemini.Part{
+					{
+						FunctionResponse: &gemini.FunctionResponse{
+							ID:       "call_ss",
+							Name:     "take_screenshot",
+							Response: json.RawMessage(`{"output":"Screenshot captured successfully"}`),
+							Parts: []*gemini.FunctionResponsePart{
+								{
+									InlineData: &gemini.FunctionResponseBlob{
+										MIMEType:    "image/png",
+										Data:        "iVBORw0KGgo=",
+										DisplayName: "screenshot.png",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostReq := geminiReq.ToBifrostResponsesRequest(bifrostCtx)
+	require.NotNil(t, bifrostReq)
+	require.Len(t, bifrostReq.Input, 1)
+
+	msg := bifrostReq.Input[0]
+	require.NotNil(t, msg.Type)
+	assert.Equal(t, schemas.ResponsesMessageTypeFunctionCallOutput, *msg.Type)
+	require.NotNil(t, msg.ResponsesToolMessage)
+	require.NotNil(t, msg.ResponsesToolMessage.Output)
+	require.Len(t, msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks, 2)
+
+	textBlock := msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks[0]
+	assert.Equal(t, schemas.ResponsesInputMessageContentBlockTypeText, textBlock.Type)
+	require.NotNil(t, textBlock.Text)
+	assert.Equal(t, "Screenshot captured successfully", *textBlock.Text)
+
+	imageBlock := msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks[1]
+	assert.Equal(t, schemas.ResponsesInputMessageContentBlockTypeImage, imageBlock.Type)
+	require.NotNil(t, imageBlock.ResponsesInputMessageContentBlockImage)
+	require.NotNil(t, imageBlock.ImageURL)
+	assert.Equal(t, "data:image/png;base64,iVBORw0KGgo=", *imageBlock.ImageURL)
+}
+
+func TestGenAISnakeCaseFunctionResponseParts_PreservedInBifrostToolOutput(t *testing.T) {
+	raw := []byte(`{
+		"model": "gemini-2.5-flash",
+		"contents": [
+			{
+				"role": "user",
+				"parts": [
+					{
+						"function_response": {
+							"id": "action__observe",
+							"name": "action__observe",
+							"response": {
+								"output": "**✓ Captured fresh screenshot**"
+							},
+							"parts": [
+								{
+									"inline_data": {
+										"data": "iVBORw0KGgo=",
+										"display_name": "step_002.jpg",
+										"mime_type": "image/png"
+									}
+								}
+							]
+						}
+					}
+				]
+			}
+		]
+	}`)
+
+	var geminiReq gemini.GeminiGenerationRequest
+	require.NoError(t, sonic.Unmarshal(raw, &geminiReq))
+
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostReq := geminiReq.ToBifrostResponsesRequest(bifrostCtx)
+	require.NotNil(t, bifrostReq)
+	require.Len(t, bifrostReq.Input, 1)
+
+	msg := bifrostReq.Input[0]
+	require.NotNil(t, msg.Type)
+	assert.Equal(t, schemas.ResponsesMessageTypeFunctionCallOutput, *msg.Type)
+	require.NotNil(t, msg.ResponsesToolMessage)
+	require.NotNil(t, msg.ResponsesToolMessage.Output)
+	require.Len(t, msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks, 2)
+
+	textBlock := msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks[0]
+	assert.Equal(t, schemas.ResponsesInputMessageContentBlockTypeText, textBlock.Type)
+	require.NotNil(t, textBlock.Text)
+	assert.Equal(t, "**✓ Captured fresh screenshot**", *textBlock.Text)
+
+	imageBlock := msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks[1]
+	assert.Equal(t, schemas.ResponsesInputMessageContentBlockTypeImage, imageBlock.Type)
+	require.NotNil(t, imageBlock.ResponsesInputMessageContentBlockImage)
+	require.NotNil(t, imageBlock.ImageURL)
+	assert.Equal(t, "data:image/png;base64,iVBORw0KGgo=", *imageBlock.ImageURL)
+}
+
+func TestToGeminiResponsesResponse_NestsToolOutputMediaInFunctionResponseParts(t *testing.T) {
+	bifrostResp := &schemas.BifrostResponsesResponse{
+		Model: "gemini-2.5-flash",
+		Output: []schemas.ResponsesMessage{
+			{
+				Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+				ResponsesToolMessage: &schemas.ResponsesToolMessage{
+					CallID: schemas.Ptr("call_ss"),
+					Name:   schemas.Ptr("take_screenshot"),
+					Output: &schemas.ResponsesToolMessageOutputStruct{
+						ResponsesFunctionToolCallOutputBlocks: []schemas.ResponsesMessageContentBlock{
+							{
+								Type: schemas.ResponsesInputMessageContentBlockTypeText,
+								Text: schemas.Ptr("Screenshot captured successfully"),
+							},
+							{
+								Type: schemas.ResponsesInputMessageContentBlockTypeImage,
+								ResponsesInputMessageContentBlockImage: &schemas.ResponsesInputMessageContentBlockImage{
+									ImageURL: schemas.Ptr("https://example.com/screenshot.png"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out := gemini.ToGeminiResponsesResponse(bifrostResp)
+	require.NotNil(t, out)
+	require.Len(t, out.Candidates, 1)
+	require.NotNil(t, out.Candidates[0].Content)
+	require.Len(t, out.Candidates[0].Content.Parts, 1)
+
+	part := out.Candidates[0].Content.Parts[0]
+	require.NotNil(t, part.FunctionResponse)
+	assert.Equal(t, "call_ss", part.FunctionResponse.ID)
+	assert.Equal(t, "take_screenshot", part.FunctionResponse.Name)
+	require.Len(t, part.FunctionResponse.Parts, 1)
+	require.NotNil(t, part.FunctionResponse.Parts[0].FileData)
+	assert.Equal(t, "https://example.com/screenshot.png", part.FunctionResponse.Parts[0].FileData.FileURI)
 }
 
 // Regression: MAX_TOKENS from Gemini must survive Gemini → Bifrost → Gemini on the GenAI path
