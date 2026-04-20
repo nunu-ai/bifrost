@@ -392,6 +392,20 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 				currentParts = append(currentParts, &Part{
 					FunctionResponse: functionResponse,
 				})
+
+				// Add media parts (images, files, audio) from output blocks alongside the function response
+				if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks != nil {
+					for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
+						// Skip text blocks — already included in FunctionResponse.Response
+						if block.Text != nil {
+							continue
+						}
+						mediaPart, err := convertContentBlockToGeminiPart(block)
+						if err == nil && mediaPart != nil {
+							currentParts = append(currentParts, mediaPart)
+						}
+					}
+				}
 			}
 
 			// Handle reasoning messages
@@ -3099,6 +3113,20 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 						},
 					}
 					pendingFunctionResponseParts = append(pendingFunctionResponseParts, part)
+
+					// Add media parts (images, files, audio) from output blocks alongside the function response
+					if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks != nil {
+						for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
+							// Skip text blocks — already included in FunctionResponse.Response
+							if block.Text != nil {
+								continue
+							}
+							mediaPart, err := convertContentBlockToGeminiPart(block)
+							if err == nil && mediaPart != nil {
+								pendingFunctionResponseParts = append(pendingFunctionResponseParts, mediaPart)
+							}
+						}
+					}
 
 					// If this is the last message, flush pending responses
 					if i == len(messages)-1 && len(pendingFunctionResponseParts) > 0 {

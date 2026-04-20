@@ -1592,17 +1592,113 @@ func convertBifrostMessagesToGemini(messages []schemas.ChatMessage) ([]Content, 
 			// Parse the response content
 			var responseData json.RawMessage
 			var contentStr string
+			var mediaParts []*Part // Collect non-text content (images, files, audio) for the tool response
 
 			if message.Content != nil {
 				// Extract content string from ContentStr or ContentBlocks
 				if message.Content.ContentStr != nil && *message.Content.ContentStr != "" {
 					contentStr = *message.Content.ContentStr
 				} else if message.Content.ContentBlocks != nil {
-					// Fallback: try to extract text from content blocks
+					// Extract text for FunctionResponse and convert media blocks to Parts
 					var textParts []string
 					for _, block := range message.Content.ContentBlocks {
 						if block.Text != nil && *block.Text != "" {
 							textParts = append(textParts, *block.Text)
+						} else if block.ImageURLStruct != nil {
+							// Handle image blocks — same logic as non-tool messages
+							imageURL := block.ImageURLStruct.URL
+
+							sanitizedURL, err := schemas.SanitizeImageURL(imageURL)
+							if err != nil {
+								continue
+							}
+
+							urlInfo := schemas.ExtractURLTypeInfo(sanitizedURL)
+
+							mimeType := "image/jpeg" // default
+							if urlInfo.MediaType != nil {
+								mimeType = *urlInfo.MediaType
+							}
+
+							if urlInfo.Type == schemas.ImageContentTypeBase64 {
+								if urlInfo.DataURLWithoutPrefix != nil {
+									decodedData, err := base64.StdEncoding.DecodeString(*urlInfo.DataURLWithoutPrefix)
+									if err == nil && len(decodedData) > 0 {
+										mediaParts = append(mediaParts, &Part{
+											InlineData: &Blob{
+												MIMEType: mimeType,
+												Data:     encodeBytesToBase64String(decodedData),
+											},
+										})
+									}
+								}
+							} else {
+								mediaParts = append(mediaParts, &Part{
+									FileData: &FileData{
+										MIMEType: mimeType,
+										FileURI:  sanitizedURL,
+									},
+								})
+							}
+						} else if block.File != nil {
+							// Handle file blocks — same logic as non-tool messages
+							if block.File.FileURL != nil && *block.File.FileURL != "" {
+								mimeType := "application/pdf"
+								if block.File.FileType != nil {
+									mimeType = *block.File.FileType
+								}
+								mediaParts = append(mediaParts, &Part{
+									FileData: &FileData{
+										FileURI:  *block.File.FileURL,
+										MIMEType: mimeType,
+									},
+								})
+							} else if block.File.FileData != nil {
+								fileData := *block.File.FileData
+								mimeType := "application/pdf"
+								if block.File.FileType != nil {
+									mimeType = *block.File.FileType
+								}
+
+								dataBytes, extractedMimeType := convertFileDataToBytes(fileData)
+								if extractedMimeType != "" {
+									mimeType = extractedMimeType
+								}
+
+								if len(dataBytes) > 0 {
+									mediaParts = append(mediaParts, &Part{
+										InlineData: &Blob{
+											MIMEType: mimeType,
+											Data:     encodeBytesToBase64String(dataBytes),
+										},
+									})
+								}
+							}
+						} else if block.InputAudio != nil {
+							// Handle audio blocks — same logic as non-tool messages
+							decodedData, err := decodeBase64StringToBytes(block.InputAudio.Data)
+							if err != nil || len(decodedData) == 0 {
+								continue
+							}
+
+							mimeType := "audio/mpeg" // default
+							if block.InputAudio.Format != nil {
+								format := strings.ToLower(strings.TrimSpace(*block.InputAudio.Format))
+								if format != "" {
+									if strings.HasPrefix(format, "audio/") {
+										mimeType = format
+									} else {
+										mimeType = "audio/" + format
+									}
+								}
+							}
+
+							mediaParts = append(mediaParts, &Part{
+								InlineData: &Blob{
+									MIMEType: mimeType,
+									Data:     encodeBytesToBase64String(decodedData),
+								},
+							})
 						}
 					}
 					if len(textParts) > 0 {
@@ -1640,8 +1736,7 @@ func convertBifrostMessagesToGemini(messages []schemas.ChatMessage) ([]Content, 
 				functionName = mappedName
 			}
 
-			// Add ONLY the functionResponse part (no text part)
-			// This ensures the number of functionResponse parts equals functionCall parts
+			// Add the functionResponse part
 			pendingToolResponseParts = append(pendingToolResponseParts, &Part{
 				FunctionResponse: &FunctionResponse{
 					ID:       callID,
@@ -1649,6 +1744,9 @@ func convertBifrostMessagesToGemini(messages []schemas.ChatMessage) ([]Content, 
 					Response: responseData,
 				},
 			})
+
+			// Add any media parts (images, files, audio) alongside the function response
+			pendingToolResponseParts = append(pendingToolResponseParts, mediaParts...)
 
 			// If this is the last message, flush pending tool responses
 			if i == len(messages)-1 && len(pendingToolResponseParts) > 0 {

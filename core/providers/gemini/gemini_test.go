@@ -2013,6 +2013,445 @@ func TestResponsesAPIParallelFunctionCalling(t *testing.T) {
 	}
 }
 
+func TestToolResponseWithMediaContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		validate func(t *testing.T)
+	}{
+		{
+			name: "ChatAPI_ToolResponseWithImageURL",
+			validate: func(t *testing.T) {
+				req := &schemas.BifrostChatRequest{
+					Model: "gemini-2.0-flash",
+					Input: []schemas.ChatMessage{
+						{
+							Role: schemas.ChatMessageRoleUser,
+							Content: &schemas.ChatMessageContent{
+								ContentStr: schemas.Ptr("Take a screenshot"),
+							},
+						},
+						{
+							Role: schemas.ChatMessageRoleAssistant,
+							ChatAssistantMessage: &schemas.ChatAssistantMessage{
+								ToolCalls: []schemas.ChatAssistantMessageToolCall{
+									{
+										ID:   schemas.Ptr("call_ss"),
+										Type: schemas.Ptr("function"),
+										Function: schemas.ChatAssistantMessageToolCallFunction{
+											Name:      schemas.Ptr("take_screenshot"),
+											Arguments: `{}`,
+										},
+									},
+								},
+							},
+						},
+						{
+							Role:            schemas.ChatMessageRoleTool,
+							ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: schemas.Ptr("call_ss")},
+							Content: &schemas.ChatMessageContent{
+								ContentBlocks: []schemas.ChatContentBlock{
+									{
+										Type: schemas.ChatContentBlockTypeText,
+										Text: schemas.Ptr("Screenshot captured"),
+									},
+									{
+										Type: schemas.ChatContentBlockTypeImage,
+										ImageURLStruct: &schemas.ChatInputImage{
+											URL: "https://example.com/screenshot.png",
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+
+				result, err := gemini.ToGeminiChatCompletionRequest(req)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				// Find the tool response content (last Content)
+				toolResponseContent := result.Contents[len(result.Contents)-1]
+				assert.Equal(t, "model", toolResponseContent.Role)
+				require.Len(t, toolResponseContent.Parts, 2, "Should have 2 parts: FunctionResponse + FileData for image URL")
+
+				// First part: FunctionResponse with the text
+				part0 := toolResponseContent.Parts[0]
+				require.NotNil(t, part0.FunctionResponse, "First part must be FunctionResponse")
+				assert.Equal(t, "call_ss", part0.FunctionResponse.ID)
+				assert.Equal(t, "take_screenshot", part0.FunctionResponse.Name)
+				assert.Contains(t, string(part0.FunctionResponse.Response), "Screenshot captured")
+
+				// Second part: FileData for the image URL
+				part1 := toolResponseContent.Parts[1]
+				require.NotNil(t, part1.FileData, "Second part must be FileData for image URL")
+				assert.Equal(t, "https://example.com/screenshot.png", part1.FileData.FileURI)
+				assert.NotEmpty(t, part1.FileData.MIMEType)
+			},
+		},
+		{
+			name: "ChatAPI_ToolResponseWithBase64Image",
+			validate: func(t *testing.T) {
+				req := &schemas.BifrostChatRequest{
+					Model: "gemini-2.0-flash",
+					Input: []schemas.ChatMessage{
+						{
+							Role: schemas.ChatMessageRoleUser,
+							Content: &schemas.ChatMessageContent{
+								ContentStr: schemas.Ptr("Take a screenshot"),
+							},
+						},
+						{
+							Role: schemas.ChatMessageRoleAssistant,
+							ChatAssistantMessage: &schemas.ChatAssistantMessage{
+								ToolCalls: []schemas.ChatAssistantMessageToolCall{
+									{
+										ID:   schemas.Ptr("call_ss"),
+										Type: schemas.Ptr("function"),
+										Function: schemas.ChatAssistantMessageToolCallFunction{
+											Name:      schemas.Ptr("take_screenshot"),
+											Arguments: `{}`,
+										},
+									},
+								},
+							},
+						},
+						{
+							Role:            schemas.ChatMessageRoleTool,
+							ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: schemas.Ptr("call_ss")},
+							Content: &schemas.ChatMessageContent{
+								ContentBlocks: []schemas.ChatContentBlock{
+									{
+										Type: schemas.ChatContentBlockTypeText,
+										Text: schemas.Ptr("Screenshot captured"),
+									},
+									{
+										Type: schemas.ChatContentBlockTypeImage,
+										ImageURLStruct: &schemas.ChatInputImage{
+											URL: "data:image/png;base64,iVBORw0KGgo=",
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+
+				result, err := gemini.ToGeminiChatCompletionRequest(req)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				toolResponseContent := result.Contents[len(result.Contents)-1]
+				assert.Equal(t, "model", toolResponseContent.Role)
+				require.Len(t, toolResponseContent.Parts, 2, "Should have 2 parts: FunctionResponse + InlineData for base64 image")
+
+				// First part: FunctionResponse
+				part0 := toolResponseContent.Parts[0]
+				require.NotNil(t, part0.FunctionResponse, "First part must be FunctionResponse")
+				assert.Equal(t, "call_ss", part0.FunctionResponse.ID)
+
+				// Second part: InlineData for the base64 image
+				part1 := toolResponseContent.Parts[1]
+				require.NotNil(t, part1.InlineData, "Second part must be InlineData for base64 image")
+				assert.Equal(t, "image/png", part1.InlineData.MIMEType)
+				assert.NotEmpty(t, part1.InlineData.Data, "InlineData.Data must not be empty")
+			},
+		},
+		{
+			name: "ChatAPI_ToolResponseWithFileBlock",
+			validate: func(t *testing.T) {
+				req := &schemas.BifrostChatRequest{
+					Model: "gemini-2.0-flash",
+					Input: []schemas.ChatMessage{
+						{
+							Role: schemas.ChatMessageRoleUser,
+							Content: &schemas.ChatMessageContent{
+								ContentStr: schemas.Ptr("Get the PDF"),
+							},
+						},
+						{
+							Role: schemas.ChatMessageRoleAssistant,
+							ChatAssistantMessage: &schemas.ChatAssistantMessage{
+								ToolCalls: []schemas.ChatAssistantMessageToolCall{
+									{
+										ID:   schemas.Ptr("call_pdf"),
+										Type: schemas.Ptr("function"),
+										Function: schemas.ChatAssistantMessageToolCallFunction{
+											Name:      schemas.Ptr("get_document"),
+											Arguments: `{}`,
+										},
+									},
+								},
+							},
+						},
+						{
+							Role:            schemas.ChatMessageRoleTool,
+							ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: schemas.Ptr("call_pdf")},
+							Content: &schemas.ChatMessageContent{
+								ContentBlocks: []schemas.ChatContentBlock{
+									{
+										Type: schemas.ChatContentBlockTypeText,
+										Text: schemas.Ptr("Document retrieved"),
+									},
+									{
+										Type: schemas.ChatContentBlockTypeFile,
+										File: &schemas.ChatInputFile{
+											FileURL:  schemas.Ptr("https://example.com/result.pdf"),
+											FileType: schemas.Ptr("application/pdf"),
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+
+				result, err := gemini.ToGeminiChatCompletionRequest(req)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				toolResponseContent := result.Contents[len(result.Contents)-1]
+				assert.Equal(t, "model", toolResponseContent.Role)
+				require.Len(t, toolResponseContent.Parts, 2, "Should have 2 parts: FunctionResponse + FileData for file")
+
+				// First part: FunctionResponse
+				part0 := toolResponseContent.Parts[0]
+				require.NotNil(t, part0.FunctionResponse, "First part must be FunctionResponse")
+				assert.Equal(t, "call_pdf", part0.FunctionResponse.ID)
+				assert.Equal(t, "get_document", part0.FunctionResponse.Name)
+
+				// Second part: FileData for the PDF
+				part1 := toolResponseContent.Parts[1]
+				require.NotNil(t, part1.FileData, "Second part must be FileData for file block")
+				assert.Equal(t, "application/pdf", part1.FileData.MIMEType)
+				assert.Equal(t, "https://example.com/result.pdf", part1.FileData.FileURI)
+			},
+		},
+		{
+			name: "ChatAPI_ToolResponseTextOnly_NoMediaParts",
+			validate: func(t *testing.T) {
+				req := &schemas.BifrostChatRequest{
+					Model: "gemini-2.0-flash",
+					Input: []schemas.ChatMessage{
+						{
+							Role: schemas.ChatMessageRoleUser,
+							Content: &schemas.ChatMessageContent{
+								ContentStr: schemas.Ptr("What is 2+2?"),
+							},
+						},
+						{
+							Role: schemas.ChatMessageRoleAssistant,
+							ChatAssistantMessage: &schemas.ChatAssistantMessage{
+								ToolCalls: []schemas.ChatAssistantMessageToolCall{
+									{
+										ID:   schemas.Ptr("call_calc"),
+										Type: schemas.Ptr("function"),
+										Function: schemas.ChatAssistantMessageToolCallFunction{
+											Name:      schemas.Ptr("calculator"),
+											Arguments: `{"expr":"2+2"}`,
+										},
+									},
+								},
+							},
+						},
+						{
+							Role:            schemas.ChatMessageRoleTool,
+							ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: schemas.Ptr("call_calc")},
+							Content: &schemas.ChatMessageContent{
+								ContentBlocks: []schemas.ChatContentBlock{
+									{
+										Type: schemas.ChatContentBlockTypeText,
+										Text: schemas.Ptr("The result is 4"),
+									},
+									{
+										Type: schemas.ChatContentBlockTypeText,
+										Text: schemas.Ptr("Calculation complete"),
+									},
+								},
+							},
+						},
+					},
+				}
+
+				result, err := gemini.ToGeminiChatCompletionRequest(req)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				toolResponseContent := result.Contents[len(result.Contents)-1]
+				assert.Equal(t, "model", toolResponseContent.Role)
+				require.Len(t, toolResponseContent.Parts, 1, "Text-only tool response should have exactly 1 part (FunctionResponse only)")
+
+				part0 := toolResponseContent.Parts[0]
+				require.NotNil(t, part0.FunctionResponse, "Part must be FunctionResponse")
+				assert.Equal(t, "call_calc", part0.FunctionResponse.ID)
+				assert.Nil(t, part0.FileData, "No FileData for text-only response")
+				assert.Nil(t, part0.InlineData, "No InlineData for text-only response")
+			},
+		},
+		{
+			name: "ResponsesAPI_FunctionCallOutputWithImageBlock",
+			validate: func(t *testing.T) {
+				req := &schemas.BifrostResponsesRequest{
+					Provider: schemas.Gemini,
+					Model:    "gemini-2.0-flash",
+					Input: []schemas.ResponsesMessage{
+						{
+							Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+							Type: schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+							Content: &schemas.ResponsesMessageContent{
+								ContentStr: schemas.Ptr("Take a screenshot"),
+							},
+						},
+						{
+							Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCall),
+							ResponsesToolMessage: &schemas.ResponsesToolMessage{
+								CallID:    schemas.Ptr("call_ss"),
+								Name:      schemas.Ptr("take_screenshot"),
+								Arguments: schemas.Ptr(`{}`),
+							},
+						},
+						{
+							Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+							ResponsesToolMessage: &schemas.ResponsesToolMessage{
+								CallID: schemas.Ptr("call_ss"),
+								Name:   schemas.Ptr("take_screenshot"),
+								Output: &schemas.ResponsesToolMessageOutputStruct{
+									ResponsesFunctionToolCallOutputBlocks: []schemas.ResponsesMessageContentBlock{
+										{
+											Type: schemas.ResponsesInputMessageContentBlockTypeText,
+											Text: schemas.Ptr("Screenshot captured successfully"),
+										},
+										{
+											Type: schemas.ResponsesInputMessageContentBlockTypeImage,
+											ResponsesInputMessageContentBlockImage: &schemas.ResponsesInputMessageContentBlockImage{
+												ImageURL: schemas.Ptr("https://example.com/screenshot.png"),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+
+				result, err := gemini.ToGeminiResponsesRequest(req)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				// Find the Content with FunctionResponse
+				var toolResponseContent *gemini.Content
+				for i := range result.Contents {
+					content := &result.Contents[i]
+					for _, part := range content.Parts {
+						if part.FunctionResponse != nil {
+							toolResponseContent = content
+							break
+						}
+					}
+					if toolResponseContent != nil {
+						break
+					}
+				}
+
+				require.NotNil(t, toolResponseContent, "Should have a Content with FunctionResponse")
+				assert.Equal(t, "model", toolResponseContent.Role)
+				require.Len(t, toolResponseContent.Parts, 2, "Should have 2 parts: FunctionResponse + FileData for image")
+
+				// First part: FunctionResponse
+				part0 := toolResponseContent.Parts[0]
+				require.NotNil(t, part0.FunctionResponse, "First part must be FunctionResponse")
+				assert.Equal(t, "call_ss", part0.FunctionResponse.ID)
+				assert.Equal(t, "take_screenshot", part0.FunctionResponse.Name)
+
+				// Second part: FileData for the image URL
+				part1 := toolResponseContent.Parts[1]
+				require.NotNil(t, part1.FileData, "Second part must be FileData for image URL")
+				assert.Equal(t, "https://example.com/screenshot.png", part1.FileData.FileURI)
+				assert.NotEmpty(t, part1.FileData.MIMEType)
+			},
+		},
+		{
+			name: "ResponsesAPI_FunctionCallOutputTextOnly_NoMediaParts",
+			validate: func(t *testing.T) {
+				req := &schemas.BifrostResponsesRequest{
+					Provider: schemas.Gemini,
+					Model:    "gemini-2.0-flash",
+					Input: []schemas.ResponsesMessage{
+						{
+							Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+							Type: schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+							Content: &schemas.ResponsesMessageContent{
+								ContentStr: schemas.Ptr("What is 2+2?"),
+							},
+						},
+						{
+							Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCall),
+							ResponsesToolMessage: &schemas.ResponsesToolMessage{
+								CallID:    schemas.Ptr("call_calc"),
+								Name:      schemas.Ptr("calculator"),
+								Arguments: schemas.Ptr(`{"expr":"2+2"}`),
+							},
+						},
+						{
+							Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+							ResponsesToolMessage: &schemas.ResponsesToolMessage{
+								CallID: schemas.Ptr("call_calc"),
+								Name:   schemas.Ptr("calculator"),
+								Output: &schemas.ResponsesToolMessageOutputStruct{
+									ResponsesFunctionToolCallOutputBlocks: []schemas.ResponsesMessageContentBlock{
+										{
+											Type: schemas.ResponsesInputMessageContentBlockTypeText,
+											Text: schemas.Ptr("The result is 4"),
+										},
+										{
+											Type: schemas.ResponsesInputMessageContentBlockTypeText,
+											Text: schemas.Ptr("Calculation complete"),
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+
+				result, err := gemini.ToGeminiResponsesRequest(req)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				// Find the Content with FunctionResponse
+				var toolResponseContent *gemini.Content
+				for i := range result.Contents {
+					content := &result.Contents[i]
+					for _, part := range content.Parts {
+						if part.FunctionResponse != nil {
+							toolResponseContent = content
+							break
+						}
+					}
+					if toolResponseContent != nil {
+						break
+					}
+				}
+
+				require.NotNil(t, toolResponseContent, "Should have a Content with FunctionResponse")
+				require.Len(t, toolResponseContent.Parts, 1, "Text-only output should have exactly 1 part (FunctionResponse only)")
+
+				part0 := toolResponseContent.Parts[0]
+				require.NotNil(t, part0.FunctionResponse, "Part must be FunctionResponse")
+				assert.Equal(t, "call_calc", part0.FunctionResponse.ID)
+				assert.Nil(t, part0.FileData, "No FileData for text-only output")
+				assert.Nil(t, part0.InlineData, "No InlineData for text-only output")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.validate(t)
+		})
+	}
+}
+
 // TestBifrostResponsesToGeminiToolConversion tests the conversion of tools from Bifrost Responses API to Gemini format
 func TestBifrostResponsesToGeminiToolConversion(t *testing.T) {
 	tests := []struct {
