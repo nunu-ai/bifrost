@@ -202,6 +202,9 @@ func CreateGenAIRouteConfigs(pathPrefix string) []RouteConfig {
 			return gemini.ToGeminiEmbeddingResponse(resp), nil
 		},
 		ResponsesResponseConverter: func(ctx *schemas.BifrostContext, resp *schemas.BifrostResponsesResponse) (interface{}, error) {
+			if resp.ExtraFields.Provider == schemas.Gemini && resp.ExtraFields.RawResponse != nil {
+				return resp.ExtraFields.RawResponse, nil
+			}
 			return gemini.ToGeminiResponsesResponse(resp), nil
 		},
 		SpeechResponseConverter: func(ctx *schemas.BifrostContext, resp *schemas.BifrostSpeechResponse) (interface{}, error) {
@@ -227,6 +230,12 @@ func CreateGenAIRouteConfigs(pathPrefix string) []RouteConfig {
 		},
 		StreamConfig: &StreamConfig{
 			ResponsesStreamResponseConverter: func(ctx *schemas.BifrostContext, resp *schemas.BifrostResponsesStreamResponse) (string, interface{}, error) {
+				if resp.ExtraFields.Provider == schemas.Gemini && resp.ExtraFields.RawResponse != nil {
+					if raw, ok := resp.ExtraFields.RawResponse.(string); ok {
+						return "", raw, nil
+					}
+					return "", resp.ExtraFields.RawResponse, nil
+				}
 				// Store state in context so it persists across chunks of the same stream
 				const stateKey = "gemini_stream_state"
 				var state *gemini.BifrostToGeminiStreamState
@@ -851,6 +860,13 @@ func extractAndSetModelAndRequestType(ctx *fasthttp.RequestCtx, bifrostCtx *sche
 	provider := getProviderFromHeader(ctx, schemas.Gemini)
 	// set in context
 	bifrostCtx.SetValue(bifrostContextKeyProvider, provider)
+	if provider == schemas.Gemini {
+		// Preserve the native Gemini request/response shape for direct GenAI -> Gemini calls.
+		// Bifrost still parses the provider response internally for usage/accounting, but the
+		// HTTP transport can forward the original JSON body and raw upstream response bytes.
+		bifrostCtx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, true)
+		bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
+	}
 
 	modelStr := model.(string)
 

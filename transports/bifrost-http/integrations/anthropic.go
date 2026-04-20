@@ -86,7 +86,7 @@ func createAnthropicMessagesRouteConfig(pathPrefix string, logger schemas.Logger
 				return nil, errors.New("invalid request type")
 			},
 			ResponsesResponseConverter: func(ctx *schemas.BifrostContext, resp *schemas.BifrostResponsesResponse) (interface{}, error) {
-				if isClaudeModel(resp.ExtraFields.OriginalModelRequested, resp.ExtraFields.ResolvedModelUsed, string(resp.ExtraFields.Provider)) {
+				if shouldUseRawAnthropicNativeSurface(resp.ExtraFields.Provider, resp.ExtraFields.OriginalModelRequested, resp.ExtraFields.ResolvedModelUsed) {
 					if resp.ExtraFields.RawResponse != nil {
 						return resp.ExtraFields.RawResponse, nil
 					}
@@ -114,7 +114,7 @@ func createAnthropicMessagesRouteConfig(pathPrefix string, logger schemas.Logger
 			},
 			StreamConfig: &StreamConfig{
 				ResponsesStreamResponseConverter: func(ctx *schemas.BifrostContext, resp *schemas.BifrostResponsesStreamResponse) (string, interface{}, error) {
-					if shouldUsePassthrough(ctx, resp.ExtraFields.Provider, resp.ExtraFields.OriginalModelRequested, resp.ExtraFields.ResolvedModelUsed) {
+					if shouldUseRawAnthropicNativeSurface(resp.ExtraFields.Provider, resp.ExtraFields.OriginalModelRequested, resp.ExtraFields.ResolvedModelUsed) {
 						if resp.ExtraFields.RawResponse != nil {
 							raw, ok := resp.ExtraFields.RawResponse.(string)
 							if !ok {
@@ -366,6 +366,12 @@ func checkAnthropicPassthrough(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bif
 		}
 	}
 
+	// Preserve the native Anthropic request/response shape for direct Anthropic -> Anthropic calls.
+	if shouldUseRawAnthropicNativeSurface(provider, model, "") {
+		bifrostCtx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, true)
+		bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
+	}
+
 	// Check if anthropic oauth headers are present
 	if shouldUsePassthrough(bifrostCtx, provider, model, "") {
 		bifrostCtx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, true)
@@ -398,6 +404,11 @@ func checkAnthropicPassthrough(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bif
 // shouldUsePassthrough checks if the request should be sent to the passthrough endpoint.
 func shouldUsePassthrough(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, alias string) bool {
 	return anthropic.IsClaudeCodeRequest(ctx) && isClaudeModel(model, alias, string(provider))
+}
+
+func shouldUseRawAnthropicNativeSurface(provider schemas.ModelProvider, model string, alias string) bool {
+	return provider == schemas.Anthropic ||
+		(provider == "" && (schemas.IsAnthropicModel(model) || schemas.IsAnthropicModel(alias)))
 }
 
 func isClaudeModel(model, alias, provider string) bool {

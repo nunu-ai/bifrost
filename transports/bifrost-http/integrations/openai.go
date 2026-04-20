@@ -142,7 +142,19 @@ func hydrateOpenAIRequestFromLargePayloadMetadata(bifrostCtx *schemas.BifrostCon
 // when body parsing is skipped under large payload mode.
 func openAILargePayloadPreHook(_ *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, req interface{}) error {
 	hydrateOpenAIRequestFromLargePayloadMetadata(bifrostCtx, req)
+	enableRawRequestResponseForDirectOpenAI(nil, bifrostCtx)
 	return nil
+}
+
+func enableRawRequestResponseForDirectOpenAI(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext) {
+	if bifrostCtx == nil {
+		return
+	}
+	if ctx != nil && isAzureSDKRequest(ctx) {
+		return
+	}
+	bifrostCtx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, true)
+	bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
 }
 
 func AzureEndpointPreHook(handlerStore lib.HandlerStore) func(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, req interface{}) error {
@@ -744,6 +756,7 @@ func CreateOpenAIRouteConfigs(pathPrefix string, handlerStore lib.HandlerStore) 
 			},
 			PreCallback: func(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, req interface{}) error {
 				hydrateOpenAIRequestFromLargePayloadMetadata(bifrostCtx, req)
+				enableRawRequestResponseForDirectOpenAI(ctx, bifrostCtx)
 				if isAzureSDKRequest(ctx) {
 					bifrostCtx.SetValue(schemas.BifrostContextKeyIsAzureUserAgent, true)
 				}
@@ -1111,6 +1124,7 @@ func CreateOpenAIRouteConfigs(pathPrefix string, handlerStore lib.HandlerStore) 
 				return err
 			},
 			PreCallback: func(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, req interface{}) error {
+				enableRawRequestResponseForDirectOpenAI(ctx, bifrostCtx)
 				if isAzureSDKRequest(ctx) {
 					bifrostCtx.SetValue(schemas.BifrostContextKeyIsAzureUserAgent, true)
 				}
