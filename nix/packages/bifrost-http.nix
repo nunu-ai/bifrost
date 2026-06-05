@@ -39,7 +39,7 @@ buildGoModule {
 
   modRoot = "transports";
   subPackages = [ "bifrost-http" ];
-  vendorHash = "sha256-9H1aonuR7eX5/khR0QaKa9r77tKk7e5ELPdipWeEgzE=";
+  vendorHash = "sha256-8sIeSdkQBaoJ5C9EH8DQ1+kMsefdq3og7D56zOw/7lg=";
 
   doCheck = false;
 

@@ -144,10 +144,21 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 				if tokenBudget < anthropic.MinimumReasoningMaxTokens {
 					return fmt.Errorf("reasoning.max_tokens must be >= %d for anthropic", anthropic.MinimumReasoningMaxTokens)
 				}
-				bedrockReq.AdditionalModelRequestFields.Set("thinking", map[string]any{
-					"type":          "enabled",
-					"budget_tokens": tokenBudget,
-				})
+				if anthropic.IsOpus47(bifrostReq.Model) {
+					// Opus 4.7+ removed budget_tokens thinking; adaptive is the only thinking-on mode.
+					bedrockReq.AdditionalModelRequestFields.Set("thinking", map[string]any{
+						"type": "adaptive",
+					})
+					if bifrostReq.Params.Reasoning.Effort != nil && *bifrostReq.Params.Reasoning.Effort != "none" {
+						effort := anthropic.MapBifrostEffortToAnthropic(*bifrostReq.Params.Reasoning.Effort)
+						setOutputConfigField(bedrockReq.AdditionalModelRequestFields, "effort", effort)
+					}
+				} else {
+					bedrockReq.AdditionalModelRequestFields.Set("thinking", map[string]any{
+						"type":          "enabled",
+						"budget_tokens": tokenBudget,
+					})
+				}
 			} else if schemas.IsNovaModel(bifrostReq.Model) {
 				minBudgetTokens := MinimumReasoningMaxTokens
 				modelDefaultMaxTokens := providerUtils.GetMaxOutputTokensOrDefault(bifrostReq.Model, DefaultCompletionMaxTokens)

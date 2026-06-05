@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -597,10 +598,32 @@ func stripUnsupportedFieldsFromRawBody(jsonBody []byte, provider schemas.ModelPr
 //   - temperature, top_p, and top_k are not supported (setting them returns a 400).
 func IsOpus47(model string) bool {
 	model = strings.ToLower(model)
-	if !strings.Contains(model, "opus") {
+	opusIndex := strings.Index(model, "opus")
+	if opusIndex == -1 {
 		return false
 	}
-	return strings.Contains(model, "4-7") || strings.Contains(model, "4.7")
+
+	version := strings.TrimLeft(model[opusIndex+len("opus"):], "-_.")
+	if version == "" || version[0] != '4' {
+		return false
+	}
+
+	version = version[1:]
+	if version == "" || (version[0] != '-' && version[0] != '.') {
+		return false
+	}
+
+	version = version[1:]
+	minorEnd := 0
+	for minorEnd < len(version) && version[minorEnd] >= '0' && version[minorEnd] <= '9' {
+		minorEnd++
+	}
+	if minorEnd == 0 || minorEnd > 2 {
+		return false
+	}
+
+	minor, err := strconv.Atoi(version[:minorEnd])
+	return err == nil && minor >= 7
 }
 
 // SupportsNativeEffort returns true if the model supports Anthropic's native output_config.effort parameter.

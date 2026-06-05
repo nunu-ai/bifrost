@@ -1884,6 +1884,9 @@ func TestSupportsAdaptiveThinking(t *testing.T) {
 	}{
 		{"claude-opus-4-7-20260401", true},
 		{"claude-opus-4.7-20260401", true},
+		{"claude-opus-4-8", true},
+		{"claude-opus-4.8", true},
+		{"claude-opus-4-20250514", false},
 		{"claude-opus-4-6-20250514", true},
 		{"claude-opus-4.6-20250514", true},
 		{"claude-sonnet-4-6-20250514", true},
