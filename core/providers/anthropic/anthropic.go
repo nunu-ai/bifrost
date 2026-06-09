@@ -1311,8 +1311,7 @@ func HandleAnthropicResponsesStream(
 					lastChunkTime = time.Now()
 					chunkIndex++
 
-					// Only add raw response to the last chunk of the incoming event
-					if providerUtils.ShouldSendBackRawResponse(ctx, sendBackRawResponse) && i == len(responses)-1 {
+					if providerUtils.ShouldSendBackRawResponse(ctx, sendBackRawResponse) && i == 0 {
 						response.ExtraFields.RawResponse = eventData
 					}
 

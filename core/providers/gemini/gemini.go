@@ -1089,7 +1089,8 @@ func HandleGeminiResponsesStream(
 						}
 					}
 
-					// Only add raw response to the LAST response in the array
+					// Only add raw response to the last response in the array so
+					// the terminal completed chunk carries usage data alongside the raw event.
 					if sendBackRawResponse && i == len(responses)-1 {
 						response.ExtraFields.RawResponse = string(eventData)
 					}
